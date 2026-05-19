@@ -1,0 +1,862 @@
+<!DOCTYPE html>
+<!--
+  Thread Consolidator — a brain-app for BrainFoundry brains
+  Created: 2026-05-20
+
+  Paste a long chat transcript. The host brain reads it and proposes
+  structured memory entries — classified by layer (episodic / semantic /
+  procedural), tagged by kind, with a self-scored confidence. The operator
+  approves per entry; each approval fires one memory.write to the chosen
+  layer.
+
+  One self-contained file. No dependencies, no CDN, no build — same shape
+  as the other shipped brain-apps. Opened standalone (no host brain) it
+  shows a "no brain connected" message; no local proposals are fabricated.
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Thread Consolidator</title>
+<style>
+  :root {
+    --ink: #ece3d0;
+    --ink-dim: #9a8f78;
+    --ink-faint: #5f5743;
+    --paper: #14110c;
+    --paper-2: #1d1813;
+    --paper-3: #241d12;
+    --gold: #c9a24b;
+    --gold-dim: #6f5c30;
+    --line: #2c2519;
+    --line-soft: #211a11;
+    --red-dim: #7a3f2d;
+    --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+    --mono: "SF Mono", ui-monospace, "JetBrains Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background:
+      radial-gradient(1100px 700px at 50% -10%, #221b12 0%, var(--paper) 60%);
+    color: var(--ink);
+    font-family: var(--serif);
+    -webkit-font-smoothing: antialiased;
+    line-height: 1.5;
+    min-height: 100%;
+  }
+  #frame {
+    width: 100%;
+    max-width: 760px;
+    margin: 0 auto;
+    padding: 32px 22px 80px;
+  }
+  header.app {
+    text-align: center;
+    margin-bottom: 28px;
+  }
+  header.app .glyph {
+    font-size: 12px;
+    letter-spacing: 0.42em;
+    color: var(--gold);
+    text-transform: uppercase;
+  }
+  header.app h1 {
+    font-weight: 400;
+    font-size: 30px;
+    letter-spacing: 0.02em;
+    margin-top: 7px;
+  }
+  header.app .sub {
+    color: var(--ink-dim);
+    font-style: italic;
+    font-size: 14.5px;
+    margin-top: 5px;
+  }
+
+  .view { animation: rise 0.4s ease both; }
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  button {
+    font-family: var(--serif);
+    cursor: pointer;
+    border: none;
+    background: none;
+    color: inherit;
+  }
+  .cta {
+    border: 1px solid var(--gold-dim);
+    color: var(--gold);
+    background: var(--paper-2);
+    padding: 10px 22px;
+    font-size: 15px;
+    letter-spacing: 0.04em;
+    border-radius: 3px;
+    transition: background 0.18s, border-color 0.18s, color 0.18s;
+  }
+  .cta:hover { background: var(--paper-3); border-color: var(--gold); color: var(--ink); }
+  .cta:disabled { opacity: 0.35; cursor: default; }
+  .cta.ghost { color: var(--ink-dim); border-color: var(--line); background: transparent; }
+  .cta.ghost:hover { color: var(--ink); border-color: var(--gold-dim); background: transparent; }
+  .cta.small { padding: 6px 14px; font-size: 13px; letter-spacing: 0.03em; }
+
+  /* paste state */
+  textarea.paste {
+    width: 100%;
+    background: var(--paper-2);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    color: var(--ink);
+    font-family: var(--mono);
+    font-size: 13.5px;
+    line-height: 1.55;
+    padding: 14px 16px;
+    resize: vertical;
+    min-height: 360px;
+    transition: border-color 0.18s, box-shadow 0.18s;
+  }
+  textarea.paste:focus {
+    outline: none;
+    border-color: var(--gold-dim);
+    box-shadow: 0 0 16px rgba(201, 162, 75, 0.10);
+  }
+  textarea.paste::placeholder { color: var(--ink-faint); font-style: italic; font-family: var(--serif); font-size: 15px; }
+
+  .paste-row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-top: 14px;
+    flex-wrap: wrap;
+  }
+  .date-field {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .date-field label {
+    color: var(--ink-dim);
+    font-size: 13px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  input[type="date"] {
+    background: var(--paper-2);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    color: var(--ink);
+    font-family: var(--mono);
+    font-size: 13.5px;
+    padding: 7px 10px;
+    color-scheme: dark;
+  }
+  input[type="date"]:focus {
+    outline: none;
+    border-color: var(--gold-dim);
+  }
+  .spacer { flex: 1; }
+  .counter {
+    color: var(--ink-dim);
+    font-size: 12.5px;
+    font-style: italic;
+  }
+
+  /* reading state */
+  .reading {
+    text-align: center;
+    padding: 50px 0 30px;
+  }
+  .reading .pulse {
+    font-size: 13px;
+    letter-spacing: 0.34em;
+    text-transform: uppercase;
+    color: var(--gold);
+    animation: breathe 1.9s ease-in-out infinite;
+  }
+  @keyframes breathe { 0%,100% { opacity: 0.35; } 50% { opacity: 1; } }
+  .reading .note { color: var(--ink-dim); font-style: italic; margin-top: 12px; font-size: 14px; }
+
+  /* error / standalone */
+  .panel {
+    border: 1px solid var(--line);
+    background: var(--paper-2);
+    border-radius: 4px;
+    padding: 22px 24px;
+    text-align: center;
+  }
+  .panel.warn { border-color: var(--red-dim); }
+  .panel h3 { font-weight: 400; font-size: 18px; margin-bottom: 8px; color: var(--gold); }
+  .panel.warn h3 { color: #d18066; }
+  .panel p { color: var(--ink-dim); font-size: 14.5px; }
+  .panel .acts { margin-top: 16px; display: flex; gap: 10px; justify-content: center; }
+
+  /* proposals */
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 14px;
+    border: 1px solid var(--line);
+    background: var(--paper-2);
+    border-radius: 4px;
+    margin-bottom: 18px;
+    flex-wrap: wrap;
+  }
+  .toolbar .summary {
+    color: var(--ink-dim);
+    font-size: 13.5px;
+    font-style: italic;
+    flex: 1;
+    min-width: 200px;
+  }
+  .toolbar .summary b { color: var(--ink); font-style: normal; font-weight: 400; }
+  .toolbar .acts { display: flex; gap: 8px; }
+
+  .props { display: flex; flex-direction: column; gap: 12px; }
+
+  .prop {
+    border: 1px solid var(--line);
+    background: var(--paper-2);
+    border-radius: 4px;
+    padding: 14px 16px;
+    transition: opacity 0.3s, transform 0.3s, border-color 0.18s;
+  }
+  .prop.dim { opacity: 0.32; }
+  .prop.approving { border-color: var(--gold-dim); }
+  .prop.approved { border-color: var(--gold); background: #1c1810; }
+  .prop.skipped { opacity: 0.28; }
+
+  .prop .head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .prop .layer-pick {
+    background: var(--paper-3);
+    border: 1px solid var(--gold-dim);
+    color: var(--gold);
+    font-family: var(--serif);
+    font-size: 11px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    padding: 3px 8px;
+    border-radius: 2px;
+    cursor: pointer;
+  }
+  .prop .layer-pick:focus { outline: none; border-color: var(--gold); }
+  .prop .kind {
+    color: var(--ink-dim);
+    font-size: 11px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    border: 1px solid var(--line);
+    padding: 3px 8px;
+    border-radius: 2px;
+  }
+  .prop .conf {
+    margin-left: auto;
+    color: var(--ink-faint);
+    font-size: 11.5px;
+    font-family: var(--mono);
+    letter-spacing: 0.04em;
+  }
+  .prop .conf b { color: var(--ink-dim); font-weight: 400; }
+
+  .prop .title {
+    font-size: 16.5px;
+    color: var(--ink);
+    margin-top: 10px;
+    line-height: 1.4;
+  }
+  .prop .body {
+    font-size: 14px;
+    color: var(--ink-dim);
+    margin-top: 6px;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .prop .body.clipped {
+    max-height: 4.5em;
+    overflow: hidden;
+    position: relative;
+  }
+  .prop .body.clipped::after {
+    content: "";
+    position: absolute;
+    left: 0; right: 0; bottom: 0;
+    height: 1.6em;
+    background: linear-gradient(180deg, rgba(29,24,19,0) 0%, var(--paper-2) 90%);
+  }
+  .prop.approved .body.clipped::after {
+    background: linear-gradient(180deg, rgba(28,24,16,0) 0%, #1c1810 90%);
+  }
+  .prop .expand {
+    color: var(--ink-faint);
+    font-size: 12px;
+    font-style: italic;
+    margin-top: 6px;
+    cursor: pointer;
+    display: inline-block;
+  }
+  .prop .expand:hover { color: var(--ink-dim); }
+
+  .prop .row {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .prop .status {
+    font-size: 12.5px;
+    color: var(--gold);
+    font-style: italic;
+    margin-left: 4px;
+  }
+  .prop .status.err { color: #d18066; }
+  .prop .status.muted { color: var(--ink-faint); }
+
+  .mode-tag {
+    text-align: center;
+    margin-top: 26px;
+    font-size: 11.5px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--gold-dim);
+  }
+</style>
+</head>
+<body>
+  <div id="frame">
+    <header class="app">
+      <div class="glyph">&#8463; &nbsp;hbar.thread</div>
+      <h1>Thread Consolidator</h1>
+      <div class="sub">paste a transcript &mdash; your brain proposes, you approve</div>
+    </header>
+    <div id="stage"></div>
+    <div id="modeTag" class="mode-tag"></div>
+  </div>
+
+<script>
+"use strict";
+
+/* ----------------------------------------------------------------------
+   Bridge — postMessage to the host brain shell. Standalone (window.parent
+   === window) we resolve every call with { ok: false, error: "standalone" }
+   so the UI can show a "no brain connected" state instead of fabricating
+   local proposals.
+---------------------------------------------------------------------- */
+const Bridge = (() => {
+  const standalone = (window.parent === window);
+  const pending = new Map();
+  let seq = 0;
+
+  window.addEventListener("message", (e) => {
+    const m = e.data;
+    if (!m || m.type !== "reply" || !pending.has(m.request_id)) return;
+    pending.get(m.request_id).resolve(m);
+    pending.delete(m.request_id);
+  });
+
+  function call(type, payload, timeoutMs) {
+    if (standalone) return Promise.resolve({ ok: false, error: { code: "standalone" } });
+    const request_id = "tc-" + (++seq) + "-" + Date.now();
+    return new Promise((resolve) => {
+      pending.set(request_id, { resolve });
+      window.parent.postMessage({ type, payload, request_id }, "*");
+      setTimeout(() => {
+        if (pending.has(request_id)) {
+          pending.delete(request_id);
+          resolve({ ok: false, error: { code: "timeout" } });
+        }
+      }, timeoutMs || 180000);
+    });
+  }
+  return { standalone, call };
+})();
+
+/* ---------------------------------------------------------------------- */
+const stage = document.getElementById("stage");
+const modeTag = document.getElementById("modeTag");
+const state = {
+  transcript: "",
+  transcriptDate: todayIso(),
+  proposals: [],
+};
+
+const LAYERS = ["episodic", "semantic", "procedural"];
+const KINDS = ["session-note", "insight", "open-question", "decision", "belief-update"];
+
+function show(node) {
+  stage.innerHTML = "";
+  stage.appendChild(node);
+}
+function el(tag, cls, html) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (html != null) n.innerHTML = html;
+  return n;
+}
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"]/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+function todayIso() {
+  const d = new Date();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return d.getFullYear() + "-" + mm + "-" + dd;
+}
+
+/* ----------------------------------------------------------------------
+   Paste state.
+---------------------------------------------------------------------- */
+function viewPaste() {
+  modeTag.textContent = Bridge.standalone
+    ? "standalone · no brain attached"
+    : "ready · paste a transcript";
+
+  const v = el("div", "view");
+
+  const ta = el("textarea", "paste");
+  ta.placeholder = "Paste a chat transcript.";
+  ta.value = state.transcript;
+  v.appendChild(ta);
+
+  const row = el("div", "paste-row");
+
+  const dateField = el("div", "date-field");
+  dateField.appendChild(el("label", null, "Date"));
+  const di = document.createElement("input");
+  di.type = "date";
+  di.value = state.transcriptDate;
+  dateField.appendChild(di);
+  row.appendChild(dateField);
+
+  const counter = el("div", "counter", "0 chars");
+  row.appendChild(counter);
+
+  row.appendChild(el("div", "spacer"));
+
+  const btn = el("button", "cta", "Read this");
+  btn.disabled = true;
+  row.appendChild(btn);
+
+  v.appendChild(row);
+
+  if (Bridge.standalone) {
+    const w = el("div", "panel warn");
+    w.style.marginTop = "16px";
+    w.appendChild(el("h3", null, "No brain attached"));
+    w.appendChild(el("p", null,
+      "This app talks to a brain through the host shell. Install it into a " +
+      "BrainFoundry brain to consolidate transcripts. Standalone, no proposals " +
+      "are generated &mdash; the app does not fabricate."));
+    v.appendChild(w);
+  }
+
+  function update() {
+    state.transcript = ta.value;
+    state.transcriptDate = di.value || todayIso();
+    counter.textContent = ta.value.length.toLocaleString() + " chars";
+    btn.disabled = !ta.value.trim() || Bridge.standalone;
+  }
+  ta.addEventListener("input", update);
+  di.addEventListener("change", update);
+  update();
+
+  btn.onclick = () => {
+    state.transcript = ta.value;
+    state.transcriptDate = di.value || todayIso();
+    viewReading();
+  };
+
+  show(v);
+  setTimeout(() => ta.focus(), 50);
+}
+
+/* ----------------------------------------------------------------------
+   Reading state — call llm.complete, parse JSON, advance.
+---------------------------------------------------------------------- */
+async function viewReading() {
+  modeTag.textContent = "reading · your brain is classifying the transcript";
+  const v = el("div", "view reading");
+  v.appendChild(el("div", "pulse", "Reading"));
+  v.appendChild(el("div", "note",
+    "Extracting memory entries from " +
+    state.transcript.length.toLocaleString() + " characters. " +
+    "This is one llm.complete call &mdash; long transcripts can take a minute or two."));
+  show(v);
+
+  const result = await proposeFromTranscript(state.transcript);
+
+  if (!result.ok) {
+    viewError(result);
+    return;
+  }
+  state.proposals = result.proposals.map((p, i) => ({
+    id: "p" + i + "-" + Date.now(),
+    layer: LAYERS.includes(p.layer) ? p.layer : "episodic",
+    kind: KINDS.includes(p.kind) ? p.kind : "session-note",
+    title: p.title || "(untitled)",
+    content: p.content || "",
+    confidence: typeof p.confidence === "number" ? p.confidence : null,
+    status: "pending",          // pending | approving | approved | skipped | error
+    error: null,
+    saved_id: null,
+    expanded: false,
+  }));
+  // Sort: highest confidence first; null confidences sink.
+  state.proposals.sort((a, b) => {
+    const ac = a.confidence == null ? -1 : a.confidence;
+    const bc = b.confidence == null ? -1 : b.confidence;
+    return bc - ac;
+  });
+  viewProposals();
+}
+
+/* ---- prompt the brain for proposals ---- */
+async function proposeFromTranscript(transcript) {
+  const system =
+    "You are this person's own brain. You have been handed a chat transcript " +
+    "between them and another AI (typically Claude). Your job: extract the " +
+    "DURABLE MEMORY ENTRIES that this person would have written by hand at the " +
+    "end of the session, classified by memory layer.\n\n" +
+    "THE THREE LAYERS:\n" +
+    "- episodic: what happened, when, who, decisions made today. (Default when ambiguous.)\n" +
+    "- semantic: durable facts, beliefs, concepts that survive the day &mdash; re-retrievable later, independent of when said.\n" +
+    "- procedural: how-to, process, protocol the operator wants to repeat (commands, sequences, recipes).\n\n" +
+    "OUTPUT FORMAT: strict JSON. A single array, nothing else. No prose, no preface, no code fences. Each element:\n" +
+    "  { \"layer\": \"episodic\" | \"semantic\" | \"procedural\",\n" +
+    "    \"title\": string (one line, <= 90 chars),\n" +
+    "    \"content\": string (the body of the memory, in the operator's voice, as they would write it. Markdown allowed. Multi-line OK.),\n" +
+    "    \"kind\": \"session-note\" | \"insight\" | \"open-question\" | \"decision\" | \"belief-update\",\n" +
+    "    \"confidence\": number between 0 and 1 (your own self-score on whether this is worth keeping) }\n\n" +
+    "RULES:\n" +
+    "- Prefer FEWER, DENSER entries over many shallow ones. Aim for 3 to 10 proposals on a typical transcript, more only if the transcript is long and varied.\n" +
+    "- NEVER FABRICATE. Only extract what is literally in the transcript. If the transcript is thin, return a short array. An empty array [] is acceptable.\n" +
+    "- Default to 'episodic' for ambiguous cases. 'semantic' is for what survives the day.\n" +
+    "- 'kind' should match the entry's character: session-note (general dated note) / insight (a realization) / open-question (something left unresolved) / decision (a choice made) / belief-update (a change in what the operator thinks is true).\n" +
+    "- Address the operator as 'you' in the content when natural.\n" +
+    "- Do not include the date in the title or content &mdash; it is attached separately as metadata.\n";
+
+  const userMsg =
+    "Transcript date (for your context only; do not echo into entries): " +
+    state.transcriptDate + "\n\n" +
+    "=== BEGIN TRANSCRIPT ===\n" +
+    transcript + "\n" +
+    "=== END TRANSCRIPT ===\n\n" +
+    "Return the JSON array of proposed memory entries now.";
+
+  const res = await Bridge.call("llm.complete", {
+    messages: [
+      { role: "system", content: system },
+      { role: "user", content: userMsg },
+    ],
+  }, 240000);
+
+  if (!res || !res.ok) {
+    const code = (res && res.error && res.error.code) || "unknown";
+    return { ok: false, code, message: bridgeErrorMessage(code) };
+  }
+  const raw = (res.result && res.result.text) || "";
+  const parsed = parseProposalsJson(raw);
+  if (!parsed.ok) {
+    return { ok: false, code: "parse",
+      message: "Your brain returned something I couldn't parse as JSON. " +
+        "First 240 chars: " + (raw.slice(0, 240) || "(empty)") };
+  }
+  return {
+    ok: true,
+    proposals: parsed.proposals,
+    model: res.result.model || null,
+    sources: Array.isArray(res.result.sources) ? res.result.sources.length : 0,
+  };
+}
+
+function bridgeErrorMessage(code) {
+  if (code === "standalone") return "No brain is attached. Install this app into a BrainFoundry brain to use it.";
+  if (code === "timeout") return "Your brain didn't answer in time. Long transcripts can hit the model's window &mdash; try a shorter slice.";
+  return "Your brain returned an error (" + code + ").";
+}
+
+/* ---- parse the model's reply, tolerating code fences and stray prose ---- */
+function parseProposalsJson(raw) {
+  if (!raw) return { ok: false };
+  let s = raw.trim();
+  // strip ```json ... ``` or ``` ... ``` fences
+  const fence = s.match(/^```(?:json)?\s*([\s\S]*?)\s*```\s*$/i);
+  if (fence) s = fence[1].trim();
+  // some models prefix prose before the JSON — slice from first '[' to last ']'
+  const i = s.indexOf("[");
+  const j = s.lastIndexOf("]");
+  if (i >= 0 && j > i) s = s.slice(i, j + 1);
+  try {
+    const arr = JSON.parse(s);
+    if (!Array.isArray(arr)) return { ok: false };
+    const cleaned = arr.filter((x) => x && typeof x === "object")
+      .map((x) => ({
+        layer: x.layer,
+        title: x.title,
+        content: x.content,
+        kind: x.kind,
+        confidence: x.confidence,
+      }));
+    return { ok: true, proposals: cleaned };
+  } catch (e) {
+    return { ok: false };
+  }
+}
+
+/* ----------------------------------------------------------------------
+   Error / empty states.
+---------------------------------------------------------------------- */
+function viewError(result) {
+  modeTag.textContent = "error · reading failed";
+  const v = el("div", "view");
+  const p = el("div", "panel warn");
+  p.appendChild(el("h3", null, "Reading failed"));
+  p.appendChild(el("p", null, escapeHtml(result.message)));
+  const acts = el("div", "acts");
+  const back = el("button", "cta", "Back to paste");
+  back.onclick = viewPaste;
+  acts.appendChild(back);
+  p.appendChild(acts);
+  v.appendChild(p);
+  show(v);
+}
+
+/* ----------------------------------------------------------------------
+   Proposals state.
+---------------------------------------------------------------------- */
+function viewProposals() {
+  if (state.proposals.length === 0) {
+    modeTag.textContent = "read · no durable entries found";
+    const v = el("div", "view");
+    const p = el("div", "panel");
+    p.appendChild(el("h3", null, "Nothing worth keeping"));
+    p.appendChild(el("p", null,
+      "Your brain read the transcript and proposed zero durable entries. " +
+      "Either the transcript was thin, or it was conversational without lasting content."));
+    const acts = el("div", "acts");
+    const back = el("button", "cta", "Back to paste");
+    back.onclick = viewPaste;
+    acts.appendChild(back);
+    p.appendChild(acts);
+    v.appendChild(p);
+    show(v);
+    return;
+  }
+
+  modeTag.textContent = "proposals · review and approve";
+  const v = el("div", "view");
+
+  const tb = el("div", "toolbar");
+  const summary = el("div", "summary");
+  tb.appendChild(summary);
+  const acts = el("div", "acts");
+  const approveAll = el("button", "cta small", "Approve all");
+  approveAll.onclick = () => approveAllPending();
+  acts.appendChild(approveAll);
+  const back = el("button", "cta ghost small", "Start over");
+  back.onclick = () => {
+    state.proposals = [];
+    viewPaste();
+  };
+  acts.appendChild(back);
+  tb.appendChild(acts);
+  v.appendChild(tb);
+
+  const list = el("div", "props");
+  v.appendChild(list);
+
+  for (const p of state.proposals) list.appendChild(propCard(p));
+
+  show(v);
+  refreshSummary();
+
+  function refreshSummary() {
+    const total = state.proposals.length;
+    const approved = state.proposals.filter((p) => p.status === "approved").length;
+    const skipped = state.proposals.filter((p) => p.status === "skipped").length;
+    const remaining = total - approved - skipped;
+    summary.innerHTML =
+      "<b>" + total + "</b> proposed &nbsp;·&nbsp; " +
+      "<b>" + approved + "</b> kept &nbsp;·&nbsp; " +
+      "<b>" + skipped + "</b> skipped &nbsp;·&nbsp; " +
+      "<b>" + remaining + "</b> left";
+    approveAll.disabled = (remaining === 0);
+  }
+  // expose for inner functions
+  state._refreshSummary = refreshSummary;
+}
+
+function propCard(p) {
+  const card = el("div", "prop");
+  card.dataset.id = p.id;
+  if (p.status === "approved") card.classList.add("approved");
+  if (p.status === "skipped") card.classList.add("skipped");
+
+  const head = el("div", "head");
+
+  const layerSel = document.createElement("select");
+  layerSel.className = "layer-pick";
+  for (const L of LAYERS) {
+    const o = document.createElement("option");
+    o.value = L; o.textContent = L;
+    if (L === p.layer) o.selected = true;
+    layerSel.appendChild(o);
+  }
+  layerSel.onchange = () => { p.layer = layerSel.value; };
+  head.appendChild(layerSel);
+
+  head.appendChild(el("div", "kind", escapeHtml(p.kind)));
+
+  if (p.confidence != null) {
+    const c = el("div", "conf");
+    c.innerHTML = "confidence <b>" + (p.confidence * 100).toFixed(0) + "%</b>";
+    head.appendChild(c);
+  }
+  card.appendChild(head);
+
+  card.appendChild(el("div", "title", escapeHtml(p.title)));
+
+  const body = el("div", "body" + (p.expanded ? "" : " clipped"),
+    escapeHtml(p.content));
+  card.appendChild(body);
+
+  if (p.content && p.content.length > 240) {
+    const ex = el("span", "expand", p.expanded ? "Collapse" : "Expand");
+    ex.onclick = () => {
+      p.expanded = !p.expanded;
+      body.classList.toggle("clipped", !p.expanded);
+      ex.textContent = p.expanded ? "Collapse" : "Expand";
+    };
+    card.appendChild(ex);
+  }
+
+  const row = el("div", "row");
+  const approve = el("button", "cta small", "Approve");
+  const skip = el("button", "cta ghost small", "Skip");
+  const status = el("div", "status muted", "");
+
+  approve.onclick = async () => {
+    if (p.status === "approved" || p.status === "approving") return;
+    p.status = "approving";
+    approve.disabled = true; skip.disabled = true; layerSel.disabled = true;
+    card.classList.add("approving");
+    status.className = "status";
+    status.textContent = "writing to your brain…";
+    const r = await writeProposal(p);
+    if (r.ok) {
+      p.status = "approved";
+      p.saved_id = r.id;
+      card.classList.remove("approving");
+      card.classList.add("approved");
+      status.className = "status";
+      status.textContent = "kept in " + p.layer + " memory";
+      approve.remove();
+      skip.remove();
+    } else {
+      p.status = "error";
+      p.error = r.message;
+      card.classList.remove("approving");
+      status.className = "status err";
+      status.textContent = r.message;
+      approve.disabled = false; skip.disabled = false; layerSel.disabled = false;
+    }
+    if (state._refreshSummary) state._refreshSummary();
+  };
+
+  skip.onclick = () => {
+    if (p.status === "approved") return;
+    p.status = "skipped";
+    card.classList.add("skipped");
+    approve.remove();
+    skip.remove();
+    layerSel.disabled = true;
+    status.className = "status muted";
+    status.textContent = "skipped";
+    if (state._refreshSummary) state._refreshSummary();
+  };
+
+  if (p.status === "approved") {
+    status.className = "status";
+    status.textContent = "kept in " + p.layer + " memory";
+  } else if (p.status === "skipped") {
+    status.className = "status muted";
+    status.textContent = "skipped";
+    layerSel.disabled = true;
+  } else {
+    row.appendChild(approve);
+    row.appendChild(skip);
+  }
+  row.appendChild(status);
+  card.appendChild(row);
+
+  return card;
+}
+
+/* ---- write one proposal to the brain ---- */
+async function writeProposal(p) {
+  const content = p.title.trim()
+    ? ("# " + p.title.trim() + "\n\n" + (p.content || ""))
+    : (p.content || "");
+  const res = await Bridge.call("memory.write", {
+    layer: p.layer,
+    content: content,
+    source: "thread-consolidator",
+    metadata: {
+      kind: p.kind,
+      app: "thread-consolidator",
+      transcript_date: state.transcriptDate,
+      confidence: p.confidence,
+      title: p.title,
+      created: new Date().toISOString(),
+    },
+  }, 30000);
+  if (res && res.ok && res.result) {
+    return { ok: true, id: res.result.id || null };
+  }
+  const code = (res && res.error && res.error.code) || "unknown";
+  let msg = "couldn't save (" + code + ")";
+  if (code === "timeout") msg = "your brain didn't answer in time";
+  if (code === "standalone") msg = "no brain attached";
+  return { ok: false, message: msg };
+}
+
+/* ---- approve every pending proposal in order ---- */
+async function approveAllPending() {
+  for (const p of state.proposals) {
+    if (p.status !== "pending" && p.status !== "error") continue;
+    const card = stage.querySelector('[data-id="' + p.id + '"]');
+    if (!card) continue;
+    const btn = card.querySelector(".cta:not(.ghost)");
+    if (btn) {
+      btn.click();
+      // wait until status changes off "approving"
+      await waitFor(() => p.status !== "approving", 30000);
+    }
+  }
+}
+function waitFor(fn, timeoutMs) {
+  return new Promise((resolve) => {
+    const t0 = Date.now();
+    const tick = () => {
+      if (fn() || Date.now() - t0 > timeoutMs) return resolve();
+      setTimeout(tick, 60);
+    };
+    tick();
+  });
+}
+
+/* ---- boot ---- */
+viewPaste();
+</script>
+</body>
+</html>

@@ -1,0 +1,62 @@
+# Thread Consolidator — brain-app manifest
+#
+# Paste a long Claude / AI chat transcript. The host brain reads it and
+# proposes structured memory entries — classified by layer (episodic /
+# semantic / procedural), tagged by kind (session-note / insight /
+# open-question / decision / belief-update), with a self-scored
+# confidence. The operator approves per-entry; each approval fires one
+# `memory.write` to the chosen layer. Productizes the manual chat-
+# consolidation ritual (first instance 2026-04-25).
+#
+# Schema: registry/schema/brain/app.schema.json (in hbar.world)
+# Created: 2026-05-20
+#
+# Uses `llm.complete` (read the transcript, return proposals as JSON) and
+# `memory.write` (one call per approved entry). Standalone (no host) the
+# app shows a "no brain connected" message — no local proposals are
+# fabricated.
+
+dialect: brain-app/v1
+id: thread-consolidator
+name: Thread Consolidator
+version: 0.1.0
+description: Paste a chat transcript. Your brain proposes memory entries. You approve.
+license: AGPL-3.0
+
+author:
+  name: hbar
+  url: https://hbar.systems
+  contact: hello@hbar.systems
+
+repo: https://github.com/hbar-systems/brain-app-thread-consolidator
+
+tab:
+  label: Thread
+  route: /thread
+  order: 35
+
+entries:
+  ui_bundle: ./
+
+permissions:
+  - llm.invoke
+  - memory.write
+
+requires_layers:
+  - layer: semantic
+    mode: read
+  - layer: episodic
+    mode: read
+  - layer: episodic
+    mode: append
+  - layer: semantic
+    mode: append
+  - layer: procedural
+    mode: append
+
+requires_endpoints:
+  - POST /chat/rag
+  - POST /memory/append
+
+engines:
+  brainfoundry-nous: ">=0.8.4"
