@@ -4,10 +4,14 @@ A brain-app for [BrainFoundry](https://brainfoundry.ai) brains.
 
 Created: 2026-05-20
 
-Paste a long Claude / AI chat transcript. Your brain reads it and proposes
-structured memory entries — classified by layer (episodic / semantic /
-procedural), tagged by kind, with a self-scored confidence. You approve per
-entry; each approval is appended to the right layer as one durable note.
+**Take your favorite chats off the big AI and bring them home to your brain.**
+
+Most of your chat history is stuck inside someone else's product, in a format
+your brain can't index. Thread Consolidator is the smallest possible bridge:
+paste a transcript, your brain reads it and proposes structured memory
+entries — classified by layer (episodic / semantic / procedural), tagged by
+kind, with a self-scored confidence. You approve per entry; each approval is
+appended to the right layer as one durable note.
 
 A productization of the manual chat-consolidation ritual the operator was
 already doing by hand.
