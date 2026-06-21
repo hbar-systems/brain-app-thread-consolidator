@@ -19,7 +19,7 @@
 dialect: brain-app/v1
 id: thread-consolidator
 name: Thread Consolidator
-version: 0.1.0
+version: 0.1.1
 description: Take your favorite chats off the big AI and bring them home to your brain. Paste a transcript; the brain proposes classified memory entries; you approve per entry.
 license: AGPL-3.0
 

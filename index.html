@@ -585,32 +585,97 @@ function bridgeErrorMessage(code) {
   return "Your brain returned an error (" + code + ").";
 }
 
-/* ---- parse the model's reply, tolerating code fences and stray prose ---- */
+/* ---- parse the model's reply, tolerating code fences, stray prose,
+       unescaped control chars inside strings, and a truncated array ---- */
 function parseProposalsJson(raw) {
   if (!raw) return { ok: false };
   let s = raw.trim();
   // strip ```json ... ``` or ``` ... ``` fences
   const fence = s.match(/^```(?:json)?\s*([\s\S]*?)\s*```\s*$/i);
   if (fence) s = fence[1].trim();
-  // some models prefix prose before the JSON — slice from first '[' to last ']'
+  // some models prefix prose before the JSON — start at the first '['
   const i = s.indexOf("[");
+  if (i < 0) return { ok: false };
   const j = s.lastIndexOf("]");
-  if (i >= 0 && j > i) s = s.slice(i, j + 1);
-  try {
-    const arr = JSON.parse(s);
-    if (!Array.isArray(arr)) return { ok: false };
-    const cleaned = arr.filter((x) => x && typeof x === "object")
-      .map((x) => ({
-        layer: x.layer,
-        title: x.title,
-        content: x.content,
-        kind: x.kind,
-        confidence: x.confidence,
-      }));
-    return { ok: true, proposals: cleaned };
-  } catch (e) {
-    return { ok: false };
+  // keep a closed array if present; otherwise take the rest (likely truncated)
+  let body = j > i ? s.slice(i, j + 1) : s.slice(i);
+
+  // 1) strict parse on the raw slice
+  let arr = tryParseArray(body);
+  // 2) escape literal control chars that slipped inside string values, retry
+  const sanitized = sanitizeJsonControlChars(body);
+  if (!arr) arr = tryParseArray(sanitized);
+  // 3) last resort — salvage every complete top-level object (drops a
+  //    truncated final object, or a single malformed one, and keeps the rest)
+  if (!arr) {
+    const salvaged = salvageObjects(sanitized);
+    if (salvaged.length) arr = salvaged;
   }
+  if (!arr) return { ok: false };
+
+  const cleaned = arr.filter((x) => x && typeof x === "object")
+    .map((x) => ({
+      layer: x.layer,
+      title: x.title,
+      content: x.content,
+      kind: x.kind,
+      confidence: x.confidence,
+    }));
+  return { ok: true, proposals: cleaned };
+}
+
+function tryParseArray(str) {
+  try {
+    const arr = JSON.parse(str);
+    return Array.isArray(arr) ? arr : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+// Escape raw newlines/tabs/control chars that appear *inside* a JSON string
+// literal (a common model mistake — "content" with literal line breaks).
+function sanitizeJsonControlChars(s) {
+  let out = "", inStr = false, esc = false;
+  for (let k = 0; k < s.length; k++) {
+    const ch = s[k];
+    if (esc) { out += ch; esc = false; continue; }
+    if (ch === "\\") { out += ch; esc = true; continue; }
+    if (ch === '"') { inStr = !inStr; out += ch; continue; }
+    if (inStr) {
+      if (ch === "\n") { out += "\\n"; continue; }
+      if (ch === "\r") { out += "\\r"; continue; }
+      if (ch === "\t") { out += "\\t"; continue; }
+      const code = ch.charCodeAt(0);
+      if (code < 0x20) { out += "\\u" + code.toString(16).padStart(4, "0"); continue; }
+    }
+    out += ch;
+  }
+  return out;
+}
+
+// Walk the array text and pull out each balanced top-level { ... } object,
+// parsing each on its own. A truncated trailing object simply never closes,
+// so it is dropped; complete earlier objects survive.
+function salvageObjects(s) {
+  const objs = [];
+  let depth = 0, start = -1, inStr = false, esc = false;
+  for (let k = 0; k < s.length; k++) {
+    const ch = s[k];
+    if (esc) { esc = false; continue; }
+    if (ch === "\\") { esc = true; continue; }
+    if (ch === '"') { inStr = !inStr; continue; }
+    if (inStr) continue;
+    if (ch === "{") { if (depth === 0) start = k; depth++; }
+    else if (ch === "}") {
+      if (depth > 0) depth--;
+      if (depth === 0 && start >= 0) {
+        try { objs.push(JSON.parse(s.slice(start, k + 1))); } catch (e) { /* skip */ }
+        start = -1;
+      }
+    }
+  }
+  return objs;
 }
 
 /* ----------------------------------------------------------------------
